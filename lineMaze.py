@@ -57,6 +57,10 @@ def follow_line():
     P = error * Kp
 
     integral += error
+    if integral > 500:
+        integral = 500
+    elif integral < -500:
+        integral = -500
     I = integral * Ki
 
     derivative = error - last_error
