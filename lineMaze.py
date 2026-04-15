@@ -9,6 +9,14 @@ left_motor = Motor(sim, DeviceNames.MOTOR_LEFT_LINE, Direction.CLOCKWISE)
 right_motor = Motor(sim, DeviceNames.MOTOR_RIGHT_LINE, Direction.CLOCKWISE)
 color_sensor = ImageSensor(sim, DeviceNames.IMAGE_SENSOR_LINE)
 
+
+Kp = 0.12
+Ki = 0.01
+Kd = 0.05
+
+integral = 0
+last_error = 0
+
 def is_red_detected(color_sensor):
     """
     Calculates the relative intensity of the red channel compared to
@@ -33,11 +41,11 @@ def is_blue_detected(color_sensor):
 
     return blue_intensity > blue_ratio_threshold
 
-
 def follow_line():
     """
     A very simple line follower that should be improved.
     """
+    global integral, last_error
     color_sensor._update_image() # Updates the internal image
 
     reflection = color_sensor.reflection() # Gets the reflection from the image
@@ -45,8 +53,17 @@ def follow_line():
     target = 50
 
     error = reflection - target
-    base_speed = 3
-    turn_rate = error * 0.12
+    base_speed = 7
+    P = error * Kp
+
+    integral += error
+    I = integral * Ki
+
+    derivative = error - last_error
+    D = derivative * Kd
+
+    last_error = error
+    turn_rate = P + I + D
 
     left_speed = base_speed - turn_rate
     right_speed = base_speed + turn_rate
