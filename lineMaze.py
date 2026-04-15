@@ -39,12 +39,19 @@ def follow_line():
     A very simple line follower that should be improved.
     """
     color_sensor._update_image() # Updates the internal image
+
     reflection = color_sensor.reflection() # Gets the reflection from the image
     print(reflection)
+    target = 50
 
+    error = reflection - target
+    base_speed = 3
+    turn_rate = error * 0.12
 
-    left_motor.run(speed=5) # Runs the left motor at speed=5
-    right_motor.run(speed=5) # Runs the right motor at speed=5
+    left_speed = base_speed - turn_rate
+    right_speed = base_speed + turn_rate
+    left_motor.run(speed=left_speed)
+    right_motor.run(speed=right_speed)
 
 # Starts coppeliasim simulation if not done already
 sim.startSimulation()
