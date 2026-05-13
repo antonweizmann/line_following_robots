@@ -226,3 +226,5 @@ class ImageSensor(CoppeliaComponent):
 def show_image(image):
     plt.imshow(image)
     plt.show()
+
+
