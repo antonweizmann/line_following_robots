@@ -385,7 +385,7 @@ right_motor        = Motor(sim, DeviceNames.MOTOR_RIGHT_OS, Direction.CLOCKWISE)
 # ─────────────────────────────────────────────────────────────────────────────
 #  Tunable Constants
 # ─────────────────────────────────────────────────────────────────────────────
-BATTERY_LOW_THRESHOLD  = 0.1    # % — triggers Recharge
+BATTERY_LOW_THRESHOLD  = 0.96   # % — triggers Recharge
 BUMPER_FORCE_THRESHOLD = 0.14    # N — triggers Sort_and_Compact
 SONAR_DANGER_DIST      = 0.4    # m — triggers Survive (−1 means no reading)
 BLOB_MIN_COVERAGE      = 0.005  # fraction of pixels — minimum blob size to act on
@@ -405,9 +405,10 @@ _turn_180_end_time:     float = 0.0  # Used to lock the robot into a 180 spin af
 # ─────────────────────────────────────────────────────────────────────────────
 _COLOUR_RANGES: dict[str, dict[str, tuple[int, int]]] = {
     "green":  {"r": (  0,  80), "g": (100, 255), "b": (  0,  80)},
-    "brown":  {"r": ( 80, 200), "g": ( 40, 100), "b": (  0,  60)},
-    "black":  {"r": ( 0, 40), "g":  (0, 40), "b":  (0, 40)},
-    "blue":   {"r": (  0,  80), "g": (  0,  80), "b": (100, 255)},
+    # "brown":  {"r": ( 80, 200), "g": ( 40, 100), "b": (  0,  60)},
+    "brown":  {"r": ( 80, 150), "g": ( 40, 100), "b": (  20,  60)},
+    # "black":  {"r": ( 0, 40), "g":  (0, 40), "b":  (0, 40)},
+    "blue":   {"r": (  0,  80), "g": (  0,  140), "b": (100, 255)},
     "red":    {"r": (120, 255), "g": (  0,  80), "b": (  0,  80)},
     "yellow": {"r": (120, 255), "g": (120, 255), "b": (  0,  80)},
 }
@@ -571,4 +572,4 @@ while True:
     left_speed, right_speed = arbitrate()
     left_motor.run(speed=left_speed)
     right_motor.run(speed=right_speed)
-    time.sleep(0.01)
+    # time.sleep(0.01)
