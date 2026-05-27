@@ -385,40 +385,35 @@ right_motor        = Motor(sim, DeviceNames.MOTOR_RIGHT_OS, Direction.CLOCKWISE)
 # ─────────────────────────────────────────────────────────────────────────────
 #  Tunable Constants
 # ─────────────────────────────────────────────────────────────────────────────
-BATTERY_LOW_THRESHOLD  = 0.96   # % — triggers Recharge
+BATTERY_LOW_THRESHOLD  = 0.1  # % — triggers Recharge
 BUMPER_FORCE_THRESHOLD = 0.14    # N — triggers Sort_and_Compact
 SONAR_DANGER_DIST      = 0.4    # m — triggers Survive (−1 means no reading)
 BLOB_MIN_COVERAGE      = 0.005  # fraction of pixels — minimum blob size to act on
+BLOB_MIN_COVERAGE_BLACK= 0.8  # fraction of pixels — minimum blob size to act on
+BLACK_FOUND_TURN_REDUCTION = 0
 BLOB_FOUND             = False
 BASE_SPEED             = 3.0    # rad/s forward cruise
 SLOW_SPEED             = 1.5    # rad/s push / approach speed
 TURN_SPEED             = 2.0    # rad/s differential correction amplitude
 WANDER_INTERVAL        = 4.0    # seconds between random wander yaw injections
-TURN_180_TIME          = 1.55
 
 _wander_next_turn_time: float = time.time()
 _wander_turn_sign:      int   = 1
-_last_log_time:         float = time.time()
-_turn_180_end_time:     float = 0.0  # Used to lock the robot into a 180 spin after compress
 # ─────────────────────────────────────────────────────────────────────────────
 #  Pixel colour ranges (uint8, 0–255) keyed by semantic label
 # ─────────────────────────────────────────────────────────────────────────────
 _COLOUR_RANGES: dict[str, dict[str, tuple[int, int]]] = {
     "green":  {"r": (  0,  80), "g": (100, 255), "b": (  0,  80)},
-    # "brown":  {"r": ( 80, 200), "g": ( 40, 100), "b": (  0,  60)},
-    "brown":  {"r": ( 80, 150), "g": ( 40, 100), "b": (  20,  60)},
-    # "black":  {"r": ( 0, 40), "g":  (0, 40), "b":  (0, 40)},
+    "brown":  {"r": ( 80, 200), "g": (  30,  80), "b": (  0,  60)},
+    # "brown":  {"r": ( 80, 150), "g": ( 40, 100), "b": (  20,  60)},
+    "black":  {"r": ( 0, 30), "g":  (0, 30), "b":  (0, 30)},
     "blue":   {"r": (  0,  80), "g": (  0,  140), "b": (100, 255)},
     "red":    {"r": (120, 255), "g": (  0,  80), "b": (  0,  80)},
     "yellow": {"r": (120, 255), "g": (120, 255), "b": (  0,  80)},
+    "grey": {"r": (120, 255), "g": (120, 255), "b": (120, 255)},
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Temporal state  (timestamp + current turn sign only — no position)
-# ─────────────────────────────────────────────────────────────────────────────
-_wander_next_turn_time: float = time.time()
-_wander_turn_sign:      int   = 1
-_last_log_time:         float = time.time()  # Used for throttling debug logs
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Vision Helpers
@@ -439,6 +434,19 @@ def detect_blob(image: np.ndarray, colour: str) -> tuple[bool, float, float]:
     coverage = n / (H * W)
 
     if coverage < BLOB_MIN_COVERAGE:
+        return False, 0.0, 0.0
+
+    centroid_x = float(np.mean(np.where(mask)[1]))
+    x_offset   = (centroid_x - W / 2.0) / (W / 2.0)
+    return True, x_offset, coverage
+
+def detect_blob_black(image: np.ndarray, colour: str) -> tuple[bool, float, float]:
+    mask     = _build_mask(image, colour)
+    H, W     = mask.shape
+    n        = int(np.sum(mask))
+    coverage = n / (H * W)
+
+    if coverage < BLOB_MIN_COVERAGE_BLACK - BLACK_FOUND_TURN_REDUCTION:
         return False, 0.0, 0.0
 
     centroid_x = float(np.mean(np.where(mask)[1]))
@@ -467,39 +475,47 @@ def level3_sort_and_compact(
     top_img:   np.ndarray,
     small_img: np.ndarray,
 ) -> tuple[float, float] | None:
-    global BLOB_FOUND, _turn_180_end_time
+    global BLOB_FOUND, BLACK_FOUND_TURN_REDUCTION
 
-    if time.time() < _turn_180_end_time:
-        BLOB_FOUND = True
-        return (-TURN_SPEED, TURN_SPEED)
-    if bumper > 0.155:
+    black_found, _, _ = detect_blob_black(small_img[int(len(top_img) *0.4):], "black")
+    if bumper > 0.165 and black_found == False:
         return None
 
     green_found, _, _ = detect_blob(small_img, "green")
     brown_found, _, _ = detect_blob(small_img, "brown")
+    print(f"Bumper : {bumper}, green: {green_found}, brown: {brown_found}, black: {black_found}")
 
     if brown_found:
+        print("Brown")
         BLOB_FOUND = True
         robot.compress()
-        _turn_180_end_time = time.time() + TURN_180_TIME
         BLOB_FOUND = True
         return (-TURN_SPEED, TURN_SPEED)
+    if black_found:
+        print("Black")
+        BLOB_FOUND = True
+        BLACK_FOUND_TURN_REDUCTION = 0
         target_bin_colour = "red"
     elif green_found:
+        print("Green")
         BLOB_FOUND = True
         target_bin_colour = "blue"
     else:
         return (SLOW_SPEED * 0.5, SLOW_SPEED * 0.5)
 
-    bin_found, x_offset, _ = detect_blob(top_img, target_bin_colour)
+    bin_found, x_offset, _ = detect_blob(top_img[:int(len(top_img) *0.5)], target_bin_colour)
     if bin_found:
+        print("Going to ", target_bin_colour)
         return steer_toward(x_offset, base=SLOW_SPEED)
+    BLACK_FOUND_TURN_REDUCTION = 0.8
     return (-SLOW_SPEED, SLOW_SPEED)
 
-def level2_seek_object(top_img: np.ndarray) -> tuple[float, float] | None:
+def level2_seek_object(top_img: np.ndarray, small_img: np.ndarray) -> tuple[float, float] | None:
     global BLOB_FOUND
     green_found, x_green, _ = detect_blob(top_img, "green")
     brown_found, x_brown, _ = detect_blob(top_img, "brown")
+    # black_found, x_black, _ = detect_blob(small_img[(int(len(top_img) / 2)): ], "black")
+    black_found, x_black, _ = detect_blob(top_img[int(len(top_img) *0.4):], "black")
 
     if green_found:
         BLOB_FOUND = True
@@ -507,10 +523,15 @@ def level2_seek_object(top_img: np.ndarray) -> tuple[float, float] | None:
     if brown_found:
         BLOB_FOUND = True
         return steer_toward(x_brown, base=BASE_SPEED)
+    if black_found:
+        BLOB_FOUND = True
+        print("Black--")
+        return steer_toward(x_black, base=BASE_SPEED)
     return None
 
 def level1_wander() -> tuple[float, float]:
     global _wander_next_turn_time, _wander_turn_sign
+    print("=====Wander=====")
     now = time.time()
     if now >= _wander_next_turn_time:
         _wander_turn_sign      = random.choice([-1, 1])
@@ -519,10 +540,15 @@ def level1_wander() -> tuple[float, float]:
     yaw_bias = _wander_turn_sign * TURN_SPEED * 0.4
     return (BASE_SPEED + yaw_bias, BASE_SPEED - yaw_bias)
 
-def level0_survive(sonar: float, cmd: tuple[float, float]) -> tuple[float, float]:
-    obstacle_present = (sonar >= 0) and (sonar < SONAR_DANGER_DIST) and not BLOB_FOUND
+def level0_survive(sonar: float, cmd: tuple[float, float], top_img: np.ndarray) -> tuple[float, float]:
+    blue_found, _, _ = detect_blob(top_img, 'blue')
+    red_found, _, _ = detect_blob(top_img, "red")
+    wall_found, _, _ = detect_blob(top_img, "grey")
+    obstacle_present = (sonar >= 0) and (sonar < SONAR_DANGER_DIST) and not BLOB_FOUND and (blue_found or red_found or wall_found)
     if not obstacle_present:
         return cmd
+    print("=====Avoid=====")
+    print(f"Sonar : {sonar}, BLOB: {BLOB_FOUND}, Blue Bin: {blue_found}, Red Bin: {red_found}, Wall: {wall_found}")
     return (-BASE_SPEED * 0.8, -BASE_SPEED * 1.2)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -541,23 +567,17 @@ def arbitrate() -> tuple[float, float]:
     small_img = small_image_sensor.get_image()
     BLOB_FOUND = False
 
-    # --- DEBUG LOGGING ---
-    # Throttled to 10 logs per second so you can actually read the terminal
-    now = time.time()
-    if now - _last_log_time >= 0.1:
-        print(f"[DEBUG] Bumper Raw: {bumper} | Sonar: {sonar}")
-        _last_log_time = now
     # ---------------------
 
     cmd = level4_recharge(battery, top_img)
     if cmd is None:
         cmd = level3_sort_and_compact(sonar, top_img, small_img)
     if cmd is None:
-        cmd = level2_seek_object(top_img)
+        cmd = level2_seek_object(top_img, small_img)
     if cmd is None:
         cmd = level1_wander()
 
-    cmd = level0_survive(sonar, cmd)
+    cmd = level0_survive(sonar, cmd, top_img)
     return cmd
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -572,4 +592,4 @@ while True:
     left_speed, right_speed = arbitrate()
     left_motor.run(speed=left_speed)
     right_motor.run(speed=right_speed)
-    # time.sleep(0.01)
+    time.sleep(0.01)
