@@ -389,11 +389,14 @@ BATTERY_LOW_THRESHOLD  = 0.1  # % — triggers Recharge
 BUMPER_FORCE_THRESHOLD = 0.14    # N — triggers Sort_and_Compact
 SONAR_DANGER_DIST      = 0.4    # m — triggers Survive (−1 means no reading)
 BLOB_MIN_COVERAGE      = 0.005  # fraction of pixels — minimum blob size to act on
-BLOB_MIN_COVERAGE_BLACK= 0.8  # fraction of pixels — minimum blob size to act on
+BLOB_MIN_COVERAGE_BLACK= 0.6  # fraction of pixels — minimum blob size to act on
 BLACK_FOUND_TURN_REDUCTION = 0
+BIN_COVERAGE           = 0.05
+BLACK_MAX_COVERAGE     = 0.37
 BLOB_FOUND             = False
 BASE_SPEED             = 3.0    # rad/s forward cruise
-SLOW_SPEED             = 1.5    # rad/s push / approach speed
+SLOW_SPEED             = 1    # rad/s push / approach speed
+SLOW_TURN_SPEED        = 1    # rad/s push / approach speed
 TURN_SPEED             = 2.0    # rad/s differential correction amplitude
 WANDER_INTERVAL        = 4.0    # seconds between random wander yaw injections
 
@@ -440,6 +443,19 @@ def detect_blob(image: np.ndarray, colour: str) -> tuple[bool, float, float]:
     x_offset   = (centroid_x - W / 2.0) / (W / 2.0)
     return True, x_offset, coverage
 
+def detect_void(image: np.ndarray, colour: str) -> tuple[bool, float, float]:
+    mask     = _build_mask(image, colour)
+    H, W     = mask.shape
+    n        = int(np.sum(mask))
+    coverage = n / (H * W)
+
+    if coverage < BLOB_MIN_COVERAGE or coverage > BLACK_MAX_COVERAGE:
+        return False, 0.0, 0.0
+
+    centroid_x = float(np.mean(np.where(mask)[1]))
+    x_offset   = (centroid_x - W / 2.0) / (W / 2.0)
+    return True, x_offset, coverage
+
 def detect_blob_black(image: np.ndarray, colour: str) -> tuple[bool, float, float]:
     mask     = _build_mask(image, colour)
     H, W     = mask.shape
@@ -447,6 +463,19 @@ def detect_blob_black(image: np.ndarray, colour: str) -> tuple[bool, float, floa
     coverage = n / (H * W)
 
     if coverage < BLOB_MIN_COVERAGE_BLACK - BLACK_FOUND_TURN_REDUCTION:
+        return False, 0.0, 0.0
+
+    centroid_x = float(np.mean(np.where(mask)[1]))
+    x_offset   = (centroid_x - W / 2.0) / (W / 2.0)
+    return True, x_offset, coverage
+
+def detect_bin(image: np.ndarray, colour: str) -> tuple[bool, float, float]:
+    mask     = _build_mask(image, colour)
+    H, W     = mask.shape
+    n        = int(np.sum(mask))
+    coverage = n / (H * W)
+
+    if coverage < BIN_COVERAGE:
         return False, 0.0, 0.0
 
     centroid_x = float(np.mean(np.where(mask)[1]))
@@ -478,7 +507,7 @@ def level3_sort_and_compact(
     global BLOB_FOUND, BLACK_FOUND_TURN_REDUCTION
 
     black_found, _, _ = detect_blob_black(small_img[int(len(top_img) *0.4):], "black")
-    if bumper > 0.165 and black_found == False:
+    if bumper > 0.165 and black_found == False and bumper < 0.5:
         return None
 
     green_found, _, _ = detect_blob(small_img, "green")
@@ -507,15 +536,18 @@ def level3_sort_and_compact(
     if bin_found:
         print("Going to ", target_bin_colour)
         return steer_toward(x_offset, base=SLOW_SPEED)
-    BLACK_FOUND_TURN_REDUCTION = 0.8
-    return (-SLOW_SPEED, SLOW_SPEED)
+    BLACK_FOUND_TURN_REDUCTION = 0
+    # BLACK_FOUND_TURN_REDUCTION = 0.75
+    return (-SLOW_TURN_SPEED, SLOW_TURN_SPEED)
 
-def level2_seek_object(top_img: np.ndarray, small_img: np.ndarray) -> tuple[float, float] | None:
+def level2_seek_object(top_img: np.ndarray, small_img: np.ndarray, sonar: tuple) -> tuple[float, float] | None:
     global BLOB_FOUND
     green_found, x_green, _ = detect_blob(top_img, "green")
     brown_found, x_brown, _ = detect_blob(top_img, "brown")
+    blue_found, _, _ = detect_bin(top_img, 'blue')
+    red_found, _, _ = detect_bin(top_img, "red")
     # black_found, x_black, _ = detect_blob(small_img[(int(len(top_img) / 2)): ], "black")
-    black_found, x_black, _ = detect_blob(top_img[int(len(top_img) *0.4):], "black")
+    black_found, x_black, _ = detect_void(top_img[int(len(top_img) *0.4):], "black")
 
     if green_found:
         BLOB_FOUND = True
@@ -523,7 +555,7 @@ def level2_seek_object(top_img: np.ndarray, small_img: np.ndarray) -> tuple[floa
     if brown_found:
         BLOB_FOUND = True
         return steer_toward(x_brown, base=BASE_SPEED)
-    if black_found:
+    if black_found and sonar < 0.5 and not (blue_found or red_found):
         BLOB_FOUND = True
         print("Black--")
         return steer_toward(x_black, base=BASE_SPEED)
@@ -544,7 +576,7 @@ def level0_survive(sonar: float, cmd: tuple[float, float], top_img: np.ndarray) 
     blue_found, _, _ = detect_blob(top_img, 'blue')
     red_found, _, _ = detect_blob(top_img, "red")
     wall_found, _, _ = detect_blob(top_img, "grey")
-    obstacle_present = (sonar >= 0) and (sonar < SONAR_DANGER_DIST) and not BLOB_FOUND and (blue_found or red_found or wall_found)
+    obstacle_present = (sonar >= 0) and (sonar < SONAR_DANGER_DIST)  and not BLOB_FOUND and (blue_found or red_found or wall_found) or sonar > 0.55
     if not obstacle_present:
         return cmd
     print("=====Avoid=====")
@@ -573,7 +605,7 @@ def arbitrate() -> tuple[float, float]:
     if cmd is None:
         cmd = level3_sort_and_compact(sonar, top_img, small_img)
     if cmd is None:
-        cmd = level2_seek_object(top_img, small_img)
+        cmd = level2_seek_object(top_img, small_img, sonar)
     if cmd is None:
         cmd = level1_wander()
 
