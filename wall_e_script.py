@@ -389,6 +389,7 @@ BATTERY_LOW_THRESHOLD  = 0.3  # % — triggers Recharge
 BUMPER_FORCE_THRESHOLD = 0.14    # N — triggers Sort_and_Compact
 SONAR_DANGER_DIST      = 0.4    # m — triggers Survive (−1 means no reading)
 BLOB_MIN_COVERAGE      = 0.005  # fraction of pixels — minimum blob size to act on
+CHARGER_MIN_COVERAGE    = 0.001
 BLOB_MIN_COVERAGE_BLACK= 0.3  # fraction of pixels — minimum blob size to act on
 BLACK_FOUND_TURN_REDUCTION = 0
 BIN_COVERAGE           = 0.4
@@ -446,6 +447,20 @@ def detect_blob(image: np.ndarray, colour: str) -> tuple[bool, float, float]:
     centroid_x = float(np.mean(np.where(mask)[1]))
     x_offset   = (centroid_x - W / 2.0) / (W / 2.0)
     return True, x_offset, coverage
+
+def detect_charger(image: np.ndarray, colour: str) -> tuple[bool, float, float]:
+    mask     = _build_mask(image, colour)
+    H, W     = mask.shape
+    n        = int(np.sum(mask))
+    coverage = n / (H * W)
+
+    if coverage < CHARGER_MIN_COVERAGE:
+        return False, 0.0, 0.0
+
+    centroid_x = float(np.mean(np.where(mask)[1]))
+    x_offset   = (centroid_x - W / 2.0) / (W / 2.0)
+    return True, x_offset, coverage
+
 
 def detect_void(image: np.ndarray, colour: str) -> tuple[bool, float, float]:
     mask     = _build_mask(image, colour)
@@ -513,9 +528,9 @@ def steer_toward(x_offset: float, base: float = BASE_SPEED) -> tuple[float, floa
 def level4_recharge(battery: float, top_img: np.ndarray) -> tuple[float, float] | None:
     if battery >= BATTERY_LOW_THRESHOLD:
         return None
-    found, x_offset, _ = detect_bin(top_img, "yellow")
+    found, x_offset, _ = detect_charger(top_img[:int(len(top_img) *0.6)], "yellow")
     if found:
-        return steer_toward(x_offset, base=SLOW_SPEED)
+        return steer_toward(x_offset, base=BASE_SPEED)
     return (-TURN_SPEED_BAT, TURN_SPEED_BAT)
 
 def level3_sort_and_compact(
@@ -607,6 +622,7 @@ def level0_survive(sonar: float, cmd: tuple[float, float], top_img: np.ndarray) 
     red_found, _, _ = detect_bin(top_img, "red")
     wall_found, _, _ = detect_wall(top_img, "grey")
     black_found, _, _ = detect_void(top_img[int(len(top_img) *0.3 ):], "black")
+    
     obstacle_present = (sonar >= 0) and (sonar < SONAR_DANGER_DIST)  and not BLOB_FOUND and (blue_found or red_found or wall_found) or (black_found and sonar > 0.5) or sonar > 0.55
     if not obstacle_present:
         return cmd
